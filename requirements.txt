@@ -1,0 +1,5 @@
+requests>=2.25.0
+flask>=2.0.0
+werkzeug>=2.0.0
+opencv-python>=4.5.0
+matplotlib>=3.3.0 

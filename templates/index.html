@@ -1,0 +1,569 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Video Interaction Analyzer</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+
+        .container {
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
+            padding: 40px;
+            max-width: 900px;
+            width: 100%;
+            text-align: center;
+        }
+
+        .logo {
+            font-size: 2.5rem;
+            font-weight: bold;
+            color: #333;
+            margin-bottom: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+        }
+
+        .logo-icon {
+            width: 40px;
+            height: 40px;
+            background: linear-gradient(135deg, #667eea, #764ba2);
+            border-radius: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-weight: bold;
+            font-size: 1.5rem;
+        }
+
+        .subtitle {
+            color: #666;
+            font-size: 1.1rem;
+            margin-bottom: 30px;
+        }
+
+        .upload-section {
+            background: #f8f9fa;
+            border: 2px dashed #dee2e6;
+            border-radius: 15px;
+            padding: 40px;
+            margin: 30px 0;
+            transition: all 0.3s ease;
+            cursor: pointer;
+        }
+
+        .upload-section:hover {
+            border-color: #667eea;
+            background: #f0f2ff;
+        }
+
+        .upload-section.dragover {
+            border-color: #667eea;
+            background: #e8f0ff;
+        }
+
+        .upload-icon {
+            font-size: 3rem;
+            color: #667eea;
+            margin-bottom: 20px;
+        }
+
+        .upload-text {
+            font-size: 1.2rem;
+            color: #333;
+            margin-bottom: 10px;
+        }
+
+        .upload-hint {
+            color: #666;
+            font-size: 0.9rem;
+        }
+
+        .file-input {
+            display: none;
+        }
+
+        .select-btn {
+            background: #667eea;
+            color: white;
+            border: none;
+            padding: 12px 30px;
+            border-radius: 25px;
+            font-size: 1rem;
+            cursor: pointer;
+            margin-top: 20px;
+            transition: all 0.3s ease;
+        }
+
+        .select-btn:hover {
+            background: #5a6fd8;
+            transform: translateY(-2px);
+        }
+
+        .generate-btn {
+            background: linear-gradient(135deg, #667eea, #764ba2);
+            color: white;
+            border: none;
+            padding: 15px 40px;
+            border-radius: 25px;
+            font-size: 1.1rem;
+            cursor: pointer;
+            margin-top: 20px;
+            transition: all 0.3s ease;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin: 0 auto;
+        }
+
+        .generate-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 20px rgba(102, 126, 234, 0.3);
+        }
+
+        .generate-btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .loading {
+            display: none;
+            margin: 20px 0;
+        }
+
+        .spinner {
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #667eea;
+            border-radius: 50%;
+            width: 30px;
+            height: 30px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 10px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .results {
+            display: none;
+            margin-top: 30px;
+            text-align: left;
+        }
+
+        .results h3 {
+            color: #333;
+            margin-bottom: 20px;
+            text-align: center;
+        }
+
+        .summary-card {
+            background: #f8f9fa;
+            border-radius: 10px;
+            padding: 20px;
+            margin: 15px 0;
+        }
+
+        .summary-card h4 {
+            color: #667eea;
+            margin-bottom: 10px;
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin: 15px 0;
+        }
+
+        .stat-item {
+            background: white;
+            padding: 15px;
+            border-radius: 8px;
+            text-align: center;
+            border-left: 4px solid #667eea;
+        }
+
+        .stat-value {
+            font-size: 1.5rem;
+            font-weight: bold;
+            color: #667eea;
+        }
+
+        .stat-label {
+            color: #666;
+            font-size: 0.9rem;
+            margin-top: 5px;
+        }
+
+        .friction-point {
+            background: white;
+            border-left: 4px solid #ff6b6b;
+            padding: 15px;
+            margin: 10px 0;
+            border-radius: 5px;
+        }
+
+        .interaction-pattern {
+            background: white;
+            border-left: 4px solid #4ecdc4;
+            padding: 15px;
+            margin: 10px 0;
+            border-radius: 5px;
+        }
+
+        .critical-issue {
+            background: white;
+            border-left: 4px solid #ffa726;
+            padding: 15px;
+            margin: 10px 0;
+            border-radius: 5px;
+        }
+
+        .recommendation {
+            background: white;
+            border-left: 4px solid #66bb6a;
+            padding: 15px;
+            margin: 10px 0;
+            border-radius: 5px;
+        }
+
+        .download-buttons {
+            display: flex;
+            gap: 15px;
+            justify-content: center;
+            margin-top: 30px;
+        }
+        
+        .download-btn {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 12px 24px;
+            border: none;
+            border-radius: 8px;
+            text-decoration: none;
+            font-weight: 600;
+            transition: all 0.3s ease;
+            box-shadow: 0 4px 15px rgba(102, 126, 234, 0.3);
+        }
+        
+        .download-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(102, 126, 234, 0.4);
+        }
+        
+        .analysis-section {
+            background: white;
+            border-radius: 12px;
+            padding: 25px;
+            margin: 20px 0;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
+        }
+        
+        .analysis-section h3 {
+            color: #2c3e50;
+            margin-bottom: 20px;
+            font-size: 1.3em;
+        }
+        
+        .friction-points {
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+        }
+        
+        .friction-point {
+            background: #fff5f5;
+            border-left: 4px solid #e74c3c;
+            padding: 15px;
+            border-radius: 8px;
+            font-size: 0.95em;
+        }
+        
+        .interaction-patterns {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+        
+        .interaction-analysis-item {
+            background: #f8f9fa;
+            border-radius: 10px;
+            padding: 20px;
+            border-left: 4px solid #3498db;
+        }
+        
+        .interaction-analysis-item h4 {
+            color: #2c3e50;
+            margin-bottom: 15px;
+            font-size: 1.1em;
+        }
+        
+        .analysis-content {
+            line-height: 1.6;
+            color: #34495e;
+        }
+        
+        .analysis-content h5 {
+            margin: 15px 0 10px 0;
+            font-size: 1.1em;
+        }
+        
+        .analysis-content strong {
+            font-weight: 600;
+        }
+
+        .error {
+            background: #f8d7da;
+            color: #721c24;
+            padding: 15px;
+            border-radius: 10px;
+            margin: 20px 0;
+            border: 1px solid #f5c6cb;
+        }
+
+        .success {
+            background: #d4edda;
+            color: #155724;
+            padding: 15px;
+            border-radius: 10px;
+            margin: 20px 0;
+            border: 1px solid #c3e6cb;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="logo">
+            <div class="logo-icon">🖱️</div>
+            Video Interaction Analyzer
+        </div>
+        
+        <p class="subtitle">Upload an MP4 video to analyze actual cursor movements, clicks, and user interaction patterns for friction points.</p>
+
+        <div class="upload-section" id="uploadSection">
+            <div class="upload-icon">📹</div>
+            <div class="upload-text">Upload Video</div>
+            <div class="upload-hint">Drag and drop your MP4 file here, or click to browse</div>
+            <input type="file" id="videoFile" class="file-input" accept=".mp4,.avi,.mov,.mkv">
+            <button class="select-btn" onclick="document.getElementById('videoFile').click()">Select Video</button>
+        </div>
+
+        <button class="generate-btn" id="generateBtn" onclick="analyzeVideo()" disabled>
+            <span class="star-icon">⭐</span>
+            Analyze Interactions
+        </button>
+
+        <div class="loading" id="loading">
+            <div class="spinner"></div>
+            <div>Analyzing your video for cursor movements and interaction patterns...</div>
+        </div>
+
+                <!-- Analysis Results -->
+                <div id="results" class="results-section" style="display: none;">
+                    <h2>🎯 Analysis Results</h2>
+                    
+                    <!-- Statistics Grid -->
+                    <div class="stats-grid">
+                        <div class="stat-item">
+                            <div class="stat-value" id="mouse-positions">-</div>
+                            <div class="stat-label">Mouse Positions</div>
+                        </div>
+                        <div class="stat-item">
+                            <div class="stat-value" id="total-movements">-</div>
+                            <div class="stat-label">Total Movements</div>
+                        </div>
+                        <div class="stat-item">
+                            <div class="stat-value" id="avg-speed">-</div>
+                            <div class="stat-label">Avg Speed (px/s)</div>
+                        </div>
+                        <div class="stat-item">
+                            <div class="stat-value" id="friction-points">-</div>
+                            <div class="stat-label">Friction Points</div>
+                        </div>
+                    </div>
+
+                    <!-- Friction Points -->
+                    <div class="analysis-section">
+                        <h3>🚨 Critical Issues Found</h3>
+                        <div id="friction-points-list" class="friction-points">
+                            <!-- Friction points will be populated here -->
+                        </div>
+                    </div>
+
+                    <!-- Interaction Analysis -->
+                    <div class="analysis-section">
+                        <h3>🔍 User Experience Analysis</h3>
+                        <div id="interaction-analysis" class="interaction-patterns">
+                            <!-- Interaction analysis will be populated here -->
+                        </div>
+                    </div>
+
+                    <!-- Download Buttons -->
+                    <div class="download-buttons">
+                        <a id="download-mouse" href="#" class="download-btn">
+                            📊 Download Mouse Analysis Report
+                        </a>
+                        <a id="download-interaction" href="#" class="download-btn">
+                            🎯 Download Interaction Analysis Report
+                        </a>
+                    </div>
+                </div>
+    </div>
+
+    <script>
+        const uploadSection = document.getElementById('uploadSection');
+        const videoFile = document.getElementById('videoFile');
+        const generateBtn = document.getElementById('generateBtn');
+        const loading = document.getElementById('loading');
+        const results = document.getElementById('results');
+
+        // Drag and drop functionality
+        uploadSection.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            uploadSection.classList.add('dragover');
+        });
+
+        uploadSection.addEventListener('dragleave', () => {
+            uploadSection.classList.remove('dragover');
+        });
+
+        uploadSection.addEventListener('drop', (e) => {
+            e.preventDefault();
+            uploadSection.classList.remove('dragover');
+            const files = e.dataTransfer.files;
+            if (files.length > 0) {
+                videoFile.files = files;
+                updateButtonState();
+            }
+        });
+
+        videoFile.addEventListener('change', updateButtonState);
+
+        function updateButtonState() {
+            generateBtn.disabled = !videoFile.files.length;
+        }
+
+        async function analyzeVideo() {
+            if (!videoFile.files.length) return;
+
+            const formData = new FormData();
+            formData.append('video', videoFile.files[0]);
+
+            // Show loading
+            loading.style.display = 'block';
+            generateBtn.disabled = true;
+            results.style.display = 'none';
+
+            try {
+                const response = await fetch('/upload', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                const data = await response.json();
+
+                if (data.error) {
+                    showError(data.error);
+                } else if (data.success) {
+                    displayResults(data);
+                }
+            } catch (error) {
+                showError('Failed to analyze video. Please try again.');
+            } finally {
+                loading.style.display = 'none';
+                generateBtn.disabled = false;
+            }
+        }
+
+        function showError(message) {
+            results.innerHTML = `<div class="error">${message}</div>`;
+            results.style.display = 'block';
+        }
+
+        // Handle analysis results
+        function displayResults(data) {
+            const resultsDiv = document.getElementById('results');
+            
+            // Update statistics
+            document.getElementById('mouse-positions').textContent = data.mouse_positions || 0;
+            document.getElementById('total-movements').textContent = data.total_movements || 0;
+            document.getElementById('avg-speed').textContent = data.avg_speed || 0;
+            document.getElementById('friction-points').textContent = data.friction_points_count || 0;
+            
+            // Display friction points
+            const frictionList = document.getElementById('friction-points-list');
+            if (data.friction_points && data.friction_points.length > 0) {
+                frictionList.innerHTML = data.friction_points.map(point => `
+                    <div class="friction-point">
+                        <strong>${point.type}</strong> at ${point.timestamp}s
+                        <br><small>Position: ${point.position}</small>
+                        <br><small>${point.description}</small>
+                    </div>
+                `).join('');
+            } else {
+                frictionList.innerHTML = '<p>✅ No critical friction points detected</p>';
+            }
+            
+            // Display interaction analysis
+            const interactionDiv = document.getElementById('interaction-analysis');
+            if (data.interaction_analysis && data.interaction_analysis.frame_analyses) {
+                interactionDiv.innerHTML = data.interaction_analysis.frame_analyses.map((analysis, index) => `
+                    <div class="interaction-analysis-item">
+                        <h4>Frame ${index + 1}</h4>
+                        <div class="analysis-content">
+                            ${formatAnalysisText(analysis.analysis)}
+                        </div>
+                    </div>
+                `).join('');
+            } else {
+                interactionDiv.innerHTML = '<p>No interaction analysis available</p>';
+            }
+            
+            // Update download links
+            if (data.analysis_id) {
+                document.getElementById('download-mouse').href = `/download/${data.analysis_id}/mouse`;
+                document.getElementById('download-interaction').href = `/download/${data.analysis_id}/interaction`;
+            }
+            
+            resultsDiv.style.display = 'block';
+            resultsDiv.scrollIntoView({ behavior: 'smooth' });
+        }
+        
+        // Format analysis text to make it more readable
+        function formatAnalysisText(text) {
+            // Convert markdown-style formatting to HTML
+            return text
+                .replace(/## Problem:/g, '<h5 style="color: #e74c3c; margin: 10px 0;">🚨 Problem:</h5>')
+                .replace(/\*\*Why it's happening:\*\*/g, '<strong style="color: #f39c12;">Why it\'s happening:</strong>')
+                .replace(/\*\*How to fix it:\*\*/g, '<strong style="color: #27ae60;">How to fix it:</strong>')
+                .replace(/\*\*Priority:\*\*/g, '<strong style="color: #9b59b6;">Priority:</strong>')
+                .replace(/\n/g, '<br>')
+                .replace(/1\. /g, '<br>1. ')
+                .replace(/2\. /g, '<br>2. ')
+                .replace(/3\. /g, '<br>3. ');
+        }
+    </script>
+</body>
+</html> 
