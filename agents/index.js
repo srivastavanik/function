@@ -8,6 +8,7 @@ import { Firestore } from '@google-cloud/firestore';
 import express from 'express';
 import { createMastraAgent } from './lib/agent.js';
 import { sessionMonitor } from './lib/monitor.js';
+import { VoiceHandler } from './lib/voice/index.js';
 
 // Load environment variables
 config();
@@ -25,9 +26,27 @@ const firestore = new Firestore({
 // Create Mastra agent
 const agent = await createMastraAgent();
 
+// Initialize Voice Handler
+const voiceHandler = new VoiceHandler({
+  vapiApiKey: process.env.VAPI_API_KEY,
+  vapiPhoneNumber: process.env.VAPI_PHONE_NUMBER,
+  vapiAssistantId: process.env.VAPI_ASSISTANT_ID
+});
+
 // Health check endpoint
 app.get('/health', (req, res) => {
-  res.json({ status: 'healthy', agent: 'active' });
+  res.json({ status: 'healthy', agent: 'active', voice: voiceHandler.isEnabled() });
+});
+
+// Voice status endpoint
+app.get('/voice/status', async (req, res) => {
+  try {
+    const status = await voiceHandler.getStatus();
+    res.json(status);
+  } catch (error) {
+    console.error('Error getting voice status:', error);
+    res.status(500).json({ error: 'Failed to get voice status' });
+  }
 });
 
 // Webhook endpoint for session completion notifications

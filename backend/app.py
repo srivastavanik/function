@@ -13,6 +13,9 @@ import json
 import anthropic
 
 from config import Config
+import requests
+import hmac
+import hashlib
 
 # Initialize Flask app
 app = Flask(__name__)
@@ -340,6 +343,215 @@ Format as clear sections."""
     except Exception as e:
         logger.error(f"Error processing query: {str(e)}")
         return jsonify({'error': 'Internal server error'}), 500
+
+
+@app.route('/api/voice/webhook', methods=['POST'])
+def voice_webhook():
+    """Webhook endpoint for Vapi voice assistant."""
+    try:
+        # Verify webhook signature if secret is configured
+        vapi_secret = os.environ.get('VAPI_WEBHOOK_SECRET')
+        if vapi_secret:
+            signature = request.headers.get('X-Vapi-Signature')
+            if not signature:
+                return jsonify({'error': 'Missing signature'}), 401
+            
+            # Verify HMAC signature
+            expected_signature = hmac.new(
+                vapi_secret.encode(),
+                request.get_data(),
+                hashlib.sha256
+            ).hexdigest()
+            
+            if not hmac.compare_digest(signature, expected_signature):
+                return jsonify({'error': 'Invalid signature'}), 401
+        
+        # Parse webhook payload
+        data = request.get_json()
+        webhook_type = data.get('type')
+        
+        logger.info(f"Received Vapi webhook: {webhook_type}")
+        
+        # Forward to agents service for processing
+        agents_url = os.environ.get('AGENTS_SERVICE_URL', 'http://localhost:3001')
+        
+        try:
+            response = requests.post(
+                f"{agents_url}/voice/webhook",
+                json=data,
+                headers={'Content-Type': 'application/json'},
+                timeout=30
+            )
+            
+            return jsonify(response.json()), response.status_code
+            
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Failed to forward to agents service: {str(e)}")
+            
+            # Handle function calls directly if agents service is unavailable
+            if webhook_type == 'function-call':
+                function_call = data.get('functionCall', {})
+                function_name = function_call.get('name')
+                parameters = function_call.get('parameters', {})
+                
+                if function_name == 'searchSessions':
+                    # Call the query endpoint internally
+                    query_response = query_sessions_internal(parameters.get('query', ''))
+                    return jsonify({
+                        'response': query_response.get('summary', 'No results found'),
+                        'data': {
+                            'sessions': query_response.get('results', [])[:3],
+                            'totalFound': query_response.get('totalMatches', 0)
+                        }
+                    }), 200
+                
+                elif function_name == 'getSessionDetails':
+                    session_id = parameters.get('sessionId')
+                    if not session_id:
+                        return jsonify({'error': 'sessionId required'}), 400
+                    
+                    # Get session details
+                    doc = firestore_client.collection(Config.FIRESTORE_COLLECTION_SESSIONS).document(session_id).get()
+                    if not doc.exists:
+                        return jsonify({
+                            'response': 'I couldn\'t find that session.',
+                            'error': 'Session not found'
+                        }), 200
+                    
+                    session = doc.to_dict()
+                    friction_count = len(session.get('frictionPoints', []))
+                    
+                    response_text = f"Session {session_id} has {friction_count} friction points detected."
+                    if friction_count > 0:
+                        high_priority = sum(1 for fp in session.get('frictionPoints', []) if fp.get('priority') == 'high')
+                        if high_priority > 0:
+                            response_text += f" {high_priority} are high priority issues."
+                    
+                    return jsonify({
+                        'response': response_text,
+                        'data': {
+                            'sessionId': session_id,
+                            'frictionPoints': friction_count,
+                            'summary': session.get('behaviorSummary', '')
+                        }
+                    }), 200
+                
+                else:
+                    return jsonify({
+                        'error': f'Unknown function: {function_name}'
+                    }), 400
+            
+            # For other webhook types, just acknowledge
+            return jsonify({'success': True}), 200
+        
+    except Exception as e:
+        logger.error(f"Error processing voice webhook: {str(e)}")
+        return jsonify({'error': 'Internal server error'}), 500
+
+
+def query_sessions_internal(query):
+    """Internal function to query sessions (used by voice webhook)."""
+    try:
+        # Reuse logic from query_sessions endpoint
+        sessions_ref = firestore_client.collection(Config.FIRESTORE_COLLECTION_SESSIONS)
+        sessions = []
+        
+        for doc in sessions_ref.stream():
+            session_data = doc.to_dict()
+            if 'behaviorSummary' in session_data and session_data['behaviorSummary']:
+                sessions.append({
+                    'sessionId': session_data.get('sessionId'),
+                    'filename': session_data.get('filename'),
+                    'uploadTime': session_data.get('uploadTime').isoformat() if hasattr(session_data.get('uploadTime'), 'isoformat') else str(session_data.get('uploadTime')),
+                    'stats': session_data.get('stats', {}),
+                    'frictionPoints': len(session_data.get('frictionPoints', [])),
+                    'behaviorSummary': session_data.get('behaviorSummary', '')[:500]
+                })
+        
+        if not sessions:
+            return {
+                'query': query,
+                'results': [],
+                'summary': 'No analyzed sessions found.',
+                'recommendations': [],
+                'totalMatches': 0
+            }
+        
+        # Use AI to filter and summarize
+        sessions_context = json.dumps(sessions, indent=2)
+        
+        filter_response = anthropic_client.messages.create(
+            model="claude-3-5-sonnet-20241022",
+            max_tokens=300,
+            messages=[{
+                "role": "user",
+                "content": f"""Given this natural language query: "{query}"
+
+And these available sessions with their metadata:
+{sessions_context}
+
+Please identify which sessions match the query criteria. Return a JSON object with:
+{{
+    "matching_session_ids": ["id1", "id2", ...],
+    "filter_explanation": "Brief explanation of why these sessions match"
+}}"""
+            }]
+        )
+        
+        # Parse AI response
+        import re
+        filter_text = filter_response.content[0].text
+        json_match = re.search(r'\{[\s\S]*\}', filter_text)
+        
+        if json_match:
+            filter_data = json.loads(json_match.group())
+            matching_ids = filter_data.get('matching_session_ids', [])
+        else:
+            matching_ids = [s['sessionId'] for s in sessions]
+        
+        matching_sessions = [s for s in sessions if s['sessionId'] in matching_ids]
+        
+        if not matching_sessions:
+            return {
+                'query': query,
+                'results': [],
+                'summary': 'No sessions match your query criteria.',
+                'recommendations': [],
+                'totalMatches': 0
+            }
+        
+        # Generate voice-friendly summary
+        summary_response = anthropic_client.messages.create(
+            model="claude-3-5-sonnet-20241022",
+            max_tokens=200,
+            messages=[{
+                "role": "user",
+                "content": f"""Based on this query: "{query}"
+
+And these matching sessions:
+{json.dumps(matching_sessions[:3], indent=2)}
+
+Please provide a brief, voice-friendly summary (2-3 sentences) of the findings. Focus on the most important friction points and their frequency."""
+            }]
+        )
+        
+        summary_text = summary_response.content[0].text
+        
+        return {
+            'query': query,
+            'results': matching_sessions,
+            'summary': summary_text,
+            'totalMatches': len(matching_sessions)
+        }
+        
+    except Exception as e:
+        logger.error(f"Error in internal query: {str(e)}")
+        return {
+            'query': query,
+            'results': [],
+            'summary': 'An error occurred while processing your query.',
+            'totalMatches': 0
+        }
 
 
 @app.errorhandler(404)
