@@ -1,0 +1,42 @@
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: video-processor
+  annotations:
+    run.googleapis.com/execution-environment: gen2
+spec:
+  template:
+    metadata:
+      annotations:
+        run.googleapis.com/execution-environment: gen2
+        run.googleapis.com/cpu-throttling: "false"
+        autoscaling.knative.dev/minScale: "1"
+        autoscaling.knative.dev/maxScale: "10"
+    spec:
+      containerConcurrency: 1
+      timeoutSeconds: 900
+      serviceAccountName: video-processor@function-hackathon.iam.gserviceaccount.com
+      containers:
+      - image: gcr.io/function-hackathon/video-processor:latest
+        resources:
+          limits:
+            cpu: "4"
+            memory: "8Gi"
+        env:
+        - name: GOOGLE_CLOUD_PROJECT
+          value: "function-hackathon"
+        - name: GCS_BUCKET_NAME
+          value: "fh-session-videos"
+        - name: GCS_RESULTS_BUCKET
+          value: "fh-results"
+        - name: PUBSUB_TOPIC_VIDEO_UPLOADS
+          value: "video-uploads"
+        - name: PUBSUB_SUBSCRIPTION_VIDEO_PROCESSOR
+          value: "video-processor-sub"
+        - name: FIRESTORE_COLLECTION_SESSIONS
+          value: "sessions"
+        - name: ANTHROPIC_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: anthropic-api-key
+              key: latest

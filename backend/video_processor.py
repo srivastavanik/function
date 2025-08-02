@@ -89,6 +89,9 @@ class VideoProcessor:
             # Update status
             self._update_status('completed')
             
+            # Notify agent service if webhook URL is configured
+            self._notify_agent()
+            
             logger.info(f"Completed processing for session {self.session_id}")
             
         except Exception as e:
@@ -352,7 +355,8 @@ Format your response as clear, actionable bullet points."""
                 'frictionPoints': self.results['frictionPoints'],
                 'behaviorSummary': self.results['behaviorSummary'],
                 'analysisCompleted': datetime.utcnow(),
-                'resultsUri': f"gs://{Config.GCS_RESULTS_BUCKET}/{self.session_id}/"
+                'resultsUri': f"gs://{Config.GCS_RESULTS_BUCKET}/{self.session_id}/",
+                'agentProcessed': False  # Flag for agent processing
             })
             
             logger.info(f"Saved results for session {self.session_id}")
@@ -377,6 +381,24 @@ Format your response as clear, actionable bullet points."""
             
         except Exception as e:
             logger.error(f"Error updating status: {str(e)}")
+    
+    def _notify_agent(self):
+        """Notify agent service about completed analysis."""
+        agent_webhook_url = os.getenv('AGENT_WEBHOOK_URL')
+        if agent_webhook_url:
+            try:
+                import requests
+                response = requests.post(
+                    f"{agent_webhook_url}/webhook/session-completed",
+                    json={'sessionId': self.session_id},
+                    timeout=5
+                )
+                if response.status_code == 200:
+                    logger.info(f"Agent notified for session {self.session_id}")
+                else:
+                    logger.warning(f"Agent notification failed: {response.status_code}")
+            except Exception as e:
+                logger.error(f"Error notifying agent: {str(e)}")
 
 
 def process_message(message: message.Message):
