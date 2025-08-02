@@ -1,154 +1,96 @@
-# Video Interaction Analyzer
+# Function Hackathon - AI-Powered Session Friction Analysis Platform
 
-A web-based tool that analyzes video recordings to detect user interaction patterns, friction points, and provides actionable UX insights using AI vision analysis.
+A monorepo project that uses AI to analyze user session videos, detect friction points, and automatically create actionable insights and bug tickets.
 
-## 🚀 Features
-
-- **Mouse Movement Tracking**: Detects cursor positions and movement patterns
-- **Interaction Analysis**: Analyzes user behavior using AI vision
-- **Friction Point Detection**: Identifies hesitation, confusion, and usability issues
-- **Actionable Insights**: Provides specific, implementable solutions
-- **Fast Processing**: Optimized for 1-2 minute analysis of typical videos
-- **Web Interface**: Modern, responsive UI with drag-and-drop upload
-
-## 📋 Prerequisites
-
-- **Python 3.8+**
-- **ffmpeg** (for video processing)
-- **OpenRouter API Key** (for AI analysis)
-
-## 🛠️ Installation
-
-1. **Clone the repository:**
-   ```bash
-   git clone <your-repo-url>
-   cd video-interaction-analyzer
-   ```
-
-2. **Set up your API key:**
-   ```bash
-   export OPENROUTER_API_KEY='your_api_key_here'
-   ```
-
-3. **Run the startup script:**
-   ```bash
-   ./start.sh
-   ```
-
-   Or manually:
-   ```bash
-   python3 -m venv venv
-   source venv/bin/activate
-   pip install -r requirements.txt
-   python app.py
-   ```
-
-4. **Open your browser:**
-   Navigate to `http://localhost:8080`
-
-## 🎯 Usage
-
-1. **Upload a video** (MP4, AVI, MOV, MKV) by dragging and dropping
-2. **Click "Analyze Interactions"** to start the analysis
-3. **Wait 1-2 minutes** for the complete analysis
-4. **Review the results** including:
-   - Mouse movement statistics
-   - Detected friction points
-   - Actionable UX recommendations
-   - Download detailed reports
-
-## 📊 Analysis Results
-
-The tool provides:
-
-- **Problem Identification**: Clear description of UX issues
-- **Root Cause Analysis**: Why problems are occurring
-- **Actionable Solutions**: 2-3 specific fixes for each issue
-- **Priority Ratings**: High/Medium/Low urgency indicators
-- **Mouse Heat Maps**: Visual representation of user activity
-
-## ⚡ Performance Optimizations
-
-- **1 FPS frame extraction** (reduced from 2 FPS)
-- **Fast mouse tracking** (every 10th frame)
-- **6 key frames** for AI analysis (reduced from 46+)
-- **0.2s rate limiting** (reduced from 0.5s)
-- **Non-interactive matplotlib** (prevents GUI crashes)
-
-## 📁 Project Structure
+## Project Structure
 
 ```
-video-interaction-analyzer/
-├── app.py                 # Main Flask application
-├── mouse_tracker.py       # Mouse movement detection
-├── interaction_analyzer.py # AI analysis engine
-├── templates/             # Web interface templates
-├── requirements.txt       # Python dependencies
-├── start.sh              # Startup script
-└── README.md             # This file
+function-hackathon/
+├── backend/        # Server-side code and AI pipelines
+├── agents/         # Mastra agent orchestration code
+├── frontend/       # Web dashboard and upload UI
+└── package.json    # Root monorepo configuration
 ```
 
-## 🔧 Configuration
+## Tech Stack
 
-### Environment Variables
+- **Backend**: Python (Flask), Google Cloud Platform (Storage, Run, Firestore, Pub/Sub)
+- **Frontend**: Next.js (React) with TypeScript
+- **AI**: Anthropic Claude API for multimodal analysis
+- **Orchestration**: n8n, Mastra agents
+- **Integrations**: Composio (GitHub, Slack), Basic.tech, Vapi
 
-- `OPENROUTER_API_KEY`: Your OpenRouter API key for AI analysis
+## Features
 
-### Dependencies
+- 📹 Video upload and storage in Google Cloud Storage
+- 🔍 Automatic frame extraction and mouse tracking
+- 🤖 AI-powered friction point detection using Anthropic
+- 📊 Natural language queries across sessions
+- 🎫 Automated bug ticket creation via Composio
+- 🎙️ Voice interface via Vapi (optional)
+- 📈 Comprehensive dashboards and heat maps
 
-- **Flask**: Web framework
-- **OpenCV**: Computer vision for mouse tracking
-- **Matplotlib**: Heat map generation
-- **Requests**: API communication
-- **NumPy**: Numerical processing
+## Getting Started
 
-## 💡 Example Output
+### Prerequisites
 
+- Node.js 18+
+- Python 3.9+
+- Google Cloud Platform account
+- Anthropic API key
+- Composio account
+- Basic.tech account (beta access)
+- n8n instance (self-hosted or cloud)
+
+### Installation
+
+1. Clone the repository:
+```bash
+git clone https://github.com/srivastavanik/function.git
+cd function
 ```
-🚨 Problem: User hesitates when filling out the form
-Why it's happening: The form field is too vague without clear guidance
-How to fix it:
-1. Add placeholder text with examples
-2. Break down the question into smaller prompts
-3. Add a character counter and progress indicator
-Priority: High
+
+2. Install dependencies:
+```bash
+npm install
+cd backend && pip install -r requirements.txt
 ```
 
-## 🚨 Troubleshooting
+3. Set up environment variables (see `.env.example` in each directory)
 
-### Common Issues
+4. Configure Google Cloud:
+```bash
+gcloud auth login
+gcloud config set project function-hackathon
+```
 
-1. **"ffmpeg not found"**
-   - Install ffmpeg: `brew install ffmpeg` (macOS) or `sudo apt install ffmpeg` (Ubuntu)
+### Development
 
-2. **"OpenCV not installed"**
-   - Run: `pip install opencv-python matplotlib`
+Run all services:
+```bash
+npm run dev
+```
 
-3. **"API key not set"**
-   - Set: `export OPENROUTER_API_KEY='your_key_here'`
+Or run individually:
+```bash
+npm run dev:backend   # Backend server
+npm run dev:frontend  # Frontend dashboard
+```
 
-4. **"Port 8080 in use"**
-   - Change port in `app.py` or kill existing process
+## Deployment
 
-## 📈 Cost Considerations
+The project is designed to deploy on Google Cloud Platform:
 
-- **API Calls**: ~6-8 calls per video analysis
-- **Estimated Cost**: $0.02-$0.05 per video (using GPT-4o)
-- **Rate Limits**: 0.2s delay between API calls
+- Backend: Cloud Run
+- Storage: Cloud Storage
+- Database: Firestore
+- Messaging: Pub/Sub
+- Frontend: Cloud Run or Vercel
 
-## 🤝 Contributing
+## Contributing
 
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Submit a pull request
+See [CONTRIBUTING.md](CONTRIBUTING.md) for contribution guidelines.
 
-## 📄 License
+## License
 
-This project is licensed under the MIT License.
-
-## 🙏 Acknowledgments
-
-- OpenRouter for AI vision analysis
-- OpenCV for computer vision capabilities
-- Flask for the web framework 
+MIT License - see [LICENSE](LICENSE) for details.
