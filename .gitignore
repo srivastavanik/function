@@ -68,6 +68,7 @@ demo_frames/
 *.tiff
 *.md
 !README.md
+!SLACK_SETUP.md
 
 # Logs
 *.log
