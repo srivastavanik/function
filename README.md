@@ -50,18 +50,31 @@ git clone https://github.com/srivastavanik/function.git
 cd function
 ```
 
-2. Install dependencies:
+2. Run the setup script:
 ```bash
-npm install
-cd backend && pip install -r requirements.txt
+./setup.sh
 ```
 
-3. Set up environment variables (see `.env.example` in each directory)
+3. Configure environment variables:
+```bash
+# The setup script creates a .env file from .env.example
+# Edit .env with your API keys
+nano .env
+```
 
-4. Configure Google Cloud:
+4. Required API Keys:
+   - **Google Cloud**: Project ID and service account credentials
+   - **Anthropic**: API key for Claude AI analysis  
+   - **Composio**: API key for GitHub/Slack integrations
+   - **GitHub**: Personal access token for issue creation
+   - **Slack**: Webhook URL for notifications
+   - **Basic.tech** (optional): For agent memory
+   - **Vapi** (optional): For voice interface
+
+5. Configure Google Cloud:
 ```bash
 gcloud auth login
-gcloud config set project function-hackathon
+gcloud config set project <your-project-id>
 ```
 
 ### Development
