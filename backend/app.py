@@ -6,6 +6,7 @@ Flask Web Application for Video Interaction Analysis
 import os
 import firebase_admin
 from firebase_admin import credentials, firestore
+import requests
 import sys
 import subprocess
 import tempfile
@@ -86,7 +87,7 @@ def run_interaction_analysis(video_path, analysis_id):
             return {
                 'error': 'CLAUDE_API_KEY environment variable not set. Please set your API key.'
             }
-        
+
         # Create output directories
         frames_dir = os.path.join(app.config['RESULTS_FOLDER'], analysis_id, 'interaction_frames')
         analysis_dir = os.path.join(app.config['RESULTS_FOLDER'], analysis_id, 'analysis')
@@ -94,56 +95,56 @@ def run_interaction_analysis(video_path, analysis_id):
         os.makedirs(frames_dir, exist_ok=True)
         os.makedirs(analysis_dir, exist_ok=True)
         os.makedirs(mouse_dir, exist_ok=True)
-        
+
         # 1. Extract interaction frames (reduced frequency for speed)
         print("🎬 Extracting interaction frames...")
         frame_count, frame_files = extract_interaction_frames(video_path, frames_dir, fps=1)  # Reduced from 2 to 1 FPS
-        
+
         if frame_count == 0:
             return {'error': 'Failed to extract interaction frames from video'}
-        
+
         # 2. Track mouse movements (sampled for speed)
         print("🖱️ Tracking mouse movements...")
         mouse_positions = track_mouse_movement_fast(video_path, mouse_dir)  # Use fast tracking
-        
+
         if not mouse_positions:
             return {'error': 'No mouse movements detected in video'}
-        
+
         # 3. Analyze movement patterns
         print("📊 Analyzing movement patterns...")
         movement_data = analyze_movement_patterns(mouse_positions)
-        
+
         # 4. Detect friction points from mouse movements
         print("🚨 Detecting friction points...")
         friction_points = detect_friction_points(movement_data)
-        
-        # 5. Analyze interaction patterns with AI (reduced frames)
-        print("🤖 Analyzing interaction patterns with AI...")
-        interaction_analysis = analyze_interaction_patterns_fast(frames_dir, analysis_id)
-        
+
+        # 5. Analyze interaction patterns with AI (Anthropic Claude)
+        print("🤖 Analyzing interaction patterns with Anthropic Claude...")
+        interaction_analysis = analyze_interaction_patterns_claude(frames_dir, analysis_id, api_key)
+
         if not interaction_analysis or 'error' in interaction_analysis:
             return {'error': 'No interaction patterns were identified'}
-        
-        # 6. Analyze overall user behavior
-        print("🧠 Analyzing user behavior patterns...")
-        behavior_analysis = analyze_user_behavior_patterns(interaction_analysis.get('frame_analyses', []), {}, api_key)
-        
+
+        # 6. Analyze overall user behavior (Anthropic Claude)
+        print("🧠 Synthesizing user behavior summary with Claude...")
+        behavior_analysis = synthesize_behavior_summary_claude(interaction_analysis.get('frame_analyses', []), api_key)
+
         # 7. Generate heat map
         video_name = Path(video_path).stem
         heat_map_path = os.path.join(mouse_dir, f'mouse_heat_map_{video_name}.png')
         generate_heat_map(mouse_positions, heat_map_path)
-        
+
         # 8. Generate reports
         timestamp = time.strftime('%Y%m%d_%H%M%S')
-        
+
         # Mouse movement report
         mouse_report_path = os.path.join(mouse_dir, f'mouse_analysis_{video_name}_{timestamp}.md')
         generate_movement_report(movement_data, friction_points, video_name, mouse_report_path)
-        
+
         # Interaction analysis report
         interaction_report_path = os.path.join(analysis_dir, f'interaction_analysis_{video_name}_{timestamp}.md')
         generate_interaction_report(interaction_analysis.get('frame_analyses', []), {}, behavior_analysis, video_name, interaction_report_path)
-        
+
         # Create summary for web display
         summary = create_web_summary(movement_data, friction_points, interaction_analysis, behavior_analysis, frame_count)
 
@@ -189,6 +190,127 @@ def run_interaction_analysis(video_path, analysis_id):
         
     except Exception as e:
         return {'error': f'Analysis failed: {str(e)}'}
+        # --- Firestore Integration ---
+        session_doc = {
+            'session_id': analysis_id,
+            'timestamp': firestore.SERVER_TIMESTAMP,
+            'video_name': video_name,
+            'friction_points': friction_points,
+            'event_stream': movement_data.get('event_stream', []),
+            'interaction_analysis': interaction_analysis,
+            'behavior_analysis': behavior_analysis,
+            'summary': summary,
+            'mouse_positions_count': len(mouse_positions),
+            'frame_count': frame_count,
+        }
+        db.collection('sessions').document(analysis_id).set(session_doc)
+
+        # Universal context: Personal Data Store (user-specific summary)
+        # For demo, use API key as user id (replace with real user id in production)
+        user_id = api_key[-8:] if api_key else 'unknown_user'
+        user_summary_doc = {
+            'user_id': user_id,
+            'last_session_id': analysis_id,
+            'last_summary': summary,
+            'last_behavior_analysis': behavior_analysis,
+            'updated_at': firestore.SERVER_TIMESTAMP,
+        }
+        db.collection('user_summaries').document(user_id).set(user_summary_doc, merge=True)
+
+        return {
+            'success': True,
+            'summary': summary,
+            'frame_count': frame_count,
+            'mouse_positions_count': len(mouse_positions),
+            'friction_points': friction_points,
+            'interaction_analysis': interaction_analysis,
+            'behavior_analysis': behavior_analysis,
+            'mouse_report_path': mouse_report_path,
+            'interaction_report_path': interaction_report_path,
+            'heat_map_path': heat_map_path
+        }
+    except Exception as e:
+        return {'error': f'Analysis failed: {str(e)}'}
+    """Use Anthropic Claude multimodal API to summarize frames."""
+    frame_files = sorted([str(p) for p in Path(frames_dir).glob('*.png')])
+    frame_analyses = []
+    for idx, frame_path in enumerate(frame_files):
+        with open(frame_path, 'rb') as img_file:
+            img_bytes = img_file.read()
+        prompt = (
+            f"You are an expert in user experience and interaction analysis. "
+            f"Given the following image (frame {idx}) from a user session recording, "
+            f"describe in detail what the user is doing, any visible interface elements, and any signs of confusion, hesitation, or friction. "
+            f"If you see any potential usability issues, highlight them. "
+            f"Be concise but specific."
+        )
+        # Anthropic multimodal API call
+        response = requests.post(
+            "https://api.anthropic.com/v1/messages",
+            headers={
+                "x-api-key": api_key,
+                "anthropic-version": "2023-06-01",
+                "content-type": "application/json"
+            },
+            json={
+                "model": "claude-3-opus-20240229",
+                "max_tokens": 512,
+                "messages": [
+                    {"role": "user", "content": [
+                        {"type": "text", "text": prompt},
+                        {"type": "image", "source": "base64", "data": img_bytes.hex()}
+                    ]}
+                ]
+            }
+        )
+        if response.status_code == 200:
+            result = response.json()
+            analysis = result.get('content', [{}])[0].get('text', '')
+        else:
+            analysis = f"Error: {response.text}"
+        frame_analyses.append({
+            "frame": frame_path,
+            "frame_index": idx,
+            "analysis": analysis
+        })
+    return {"frame_analyses": frame_analyses}
+
+def synthesize_behavior_summary_claude(frame_analyses, api_key):
+    """Use Anthropic Claude to synthesize behavioral summary from frame analyses."""
+    if not frame_analyses:
+        return "No frame analyses available."
+    summary_prompt = (
+        "You are an expert UX and usability analyst. "
+        "Given the following frame-by-frame interaction analyses from a user session, "
+        "synthesize a behavioral summary that describes the user's journey, identifies friction points, and provides actionable recommendations for improving the experience. "
+        "Structure your response with clear sections: \n"
+        "1. Session Overview\n2. Key Observations\n3. Friction Points\n4. Recommendations\n"
+        "Be specific and practical.\n\nFrame Analyses:" 
+    )
+    for fa in frame_analyses:
+        summary_prompt += f"\nFrame {fa.get('frame_index')}: {fa.get('analysis')}"
+    response = requests.post(
+        "https://api.anthropic.com/v1/messages",
+        headers={
+            "x-api-key": api_key,
+            "anthropic-version": "2023-06-01",
+            "content-type": "application/json"
+        },
+        json={
+            "model": "claude-3-opus-20240229",
+            "max_tokens": 1024,
+            "messages": [
+                {"role": "user", "content": [{"type": "text", "text": summary_prompt}]}
+            ]
+        }
+    )
+    if response.status_code == 200:
+        result = response.json()
+        return result.get('content', [{}])[0].get('text', '')
+    else:
+        return f"Error: {response.text}"
+
+        
 
 def create_web_summary(movement_data, friction_points, interaction_analysis, behavior_analysis, frame_count):
     """Create a summary suitable for web display."""
