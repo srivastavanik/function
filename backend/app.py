@@ -72,10 +72,10 @@ def run_interaction_analysis(video_path, analysis_id):
     """Run the complete interaction analysis pipeline."""
     try:
         # Get API key
-        api_key = os.getenv('OPENROUTER_API_KEY')
+        api_key = os.getenv('CLAUDE_API_KEY')
         if not api_key:
             return {
-                'error': 'OPENROUTER_API_KEY environment variable not set. Please set your API key.'
+                'error': 'CLAUDE_API_KEY environment variable not set. Please set your API key.'
             }
         
         # Create output directories
