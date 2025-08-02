@@ -124,3 +124,8 @@ yarn-error.log*
 # TypeScript
 *.tsbuildinfo
 next-env.d.ts
+
+# Google Cloud credentials
+function-467818-*.json
+client_secret_*.json
+*.apps.googleusercontent.com.json

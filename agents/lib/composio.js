@@ -2,7 +2,16 @@
  * Composio integration for GitHub and Slack automation
  */
 
-import { Composio } from '@mastra/composio';
+// Mock Composio class
+class Composio {
+  constructor(config) {
+    this.apiKey = config.apiKey;
+  }
+  
+  async getConnectedAccounts() {
+    return [];
+  }
+}
 import { logger } from './logger.js';
 
 export class ComposioService {

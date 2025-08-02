@@ -1,312 +1,230 @@
 /**
- * Mastra Agent Implementation
+ * Function Insights Agent Implementation
  * Handles session analysis and takes action based on friction points
  */
 
-import { Mastra } from '@mastra/core';
-import { ComposioIntegration } from '@mastra/composio';
-import { BasicIntegration } from '@mastra/basic';
 import axios from 'axios';
 import { ComposioService } from './composio.js';
 import { logger } from './logger.js';
+import { Firestore } from '@google-cloud/firestore';
 
-export async function createMastraAgent() {
-  // Initialize Mastra with integrations
-  const mastra = new Mastra({
-    integrations: [
-      new ComposioIntegration({
-        apiKey: process.env.COMPOSIO_API_KEY,
-      }),
-      new BasicIntegration({
-        apiKey: process.env.BASIC_API_KEY,
-      }),
-    ],
-  });
+const firestore = new Firestore();
 
-  // Define the agent
-  const agent = mastra.createAgent({
-    name: 'FunctionAnalysisAgent',
-    description: 'Monitors video session analysis and takes action on friction points',
+export class FrictionAnalysisAgent {
+    constructor() {
+        this.composioService = new ComposioService(process.env.COMPOSIO_API_KEY);
+        this.initialized = false;
+    }
     
-    tools: [
-      {
-        name: 'fetchSessionData',
-        description: 'Fetch session data from the backend API',
-        execute: async ({ sessionId }) => {
-          try {
-            const response = await axios.get(
-              `${process.env.BACKEND_API_URL}/api/session/${sessionId}`,
-              {
-                headers: {
-                  'X-API-Key': process.env.API_KEY,
-                },
-              }
-            );
-            return response.data;
-          } catch (error) {
-            console.error(`Error fetching session ${sessionId}:`, error.message);
+    async initialize() {
+        try {
+            await this.composioService.initialize();
+            this.initialized = true;
+            logger.info('Friction Analysis Agent initialized successfully');
+        } catch (error) {
+            logger.error('Failed to initialize agent:', error);
             throw error;
-          }
-        },
-      },
-      
-      {
-        name: 'analyzeFriction',
-        description: 'Analyze friction points and determine severity',
-        execute: async ({ sessionData }) => {
-          const frictionPoints = sessionData.frictionPoints || [];
-          const behaviorSummary = sessionData.behaviorSummary || '';
-          
-          // Check for high-priority keywords
-          const highPriorityKeywords = (process.env.HIGH_PRIORITY_KEYWORDS || '').split(',');
-          const hasHighPriority = highPriorityKeywords.some(keyword => 
-            behaviorSummary.toLowerCase().includes(keyword.toLowerCase())
-          );
-          
-          // Calculate severity
-          const severity = {
-            total: frictionPoints.length,
-            high: frictionPoints.filter(fp => 
-              highPriorityKeywords.some(kw => 
-                fp.description?.toLowerCase().includes(kw.toLowerCase())
-              )
-            ).length,
-            threshold: parseInt(process.env.FRICTION_THRESHOLD || '3'),
-            exceedsThreshold: frictionPoints.length >= parseInt(process.env.FRICTION_THRESHOLD || '3'),
-            hasHighPriority,
-          };
-          
-          return {
-            frictionPoints,
-            severity,
-            actionRequired: severity.exceedsThreshold || hasHighPriority,
-          };
-        },
-      },
-      
-      {
-        name: 'createGitHubIssue',
-        description: 'Create a GitHub issue for high-priority friction points',
-        execute: async ({ sessionData, analysis }) => {
-          const composio = mastra.getIntegration('composio');
-          
-          // Format issue body
-          const issueBody = `
-## Session Analysis Report
+        }
+    }
 
-**Session ID:** ${sessionData.sessionId}
-**Date:** ${new Date(sessionData.metadata?.uploadTime).toISOString()}
-**Video:** ${sessionData.metadata?.filename}
-
-### Friction Points Detected: ${analysis.frictionPoints.length}
-
-${analysis.frictionPoints.map((fp, idx) => `
-${idx + 1}. **${fp.type}** at ${fp.timestamp}s
-   - ${fp.description}
-`).join('\n')}
-
-### AI Behavior Summary
-
-${sessionData.behaviorSummary}
-
-### Severity Analysis
-
-- Total friction points: ${analysis.severity.total}
-- High priority: ${analysis.severity.high}
-- Exceeds threshold: ${analysis.severity.exceedsThreshold ? 'Yes' : 'No'}
-
----
-*This issue was automatically created by the Function Analysis Agent*
-`;
-
-          const issue = await composio.github.createIssue({
-            owner: process.env.GITHUB_REPO_OWNER,
-            repo: process.env.GITHUB_REPO_NAME,
-            title: `[Auto] High friction detected in session ${sessionData.sessionId}`,
-            body: issueBody,
-            labels: ['friction-analysis', 'auto-generated', analysis.severity.hasHighPriority ? 'high-priority' : 'medium-priority'],
-          });
-          
-          return issue;
-        },
-      },
-      
-      {
-        name: 'sendSlackNotification',
-        description: 'Send notification to Slack',
-        execute: async ({ sessionData, analysis, githubIssue }) => {
-          const composio = mastra.getIntegration('composio');
-          
-          const message = {
-            text: `🚨 Session Analysis Alert`,
-            blocks: [
-              {
-                type: 'header',
-                text: {
-                  type: 'plain_text',
-                  text: '🚨 High Friction Session Detected',
-                },
-              },
-              {
-                type: 'section',
-                fields: [
-                  {
-                    type: 'mrkdwn',
-                    text: `*Session ID:*\n${sessionData.sessionId}`,
-                  },
-                  {
-                    type: 'mrkdwn',
-                    text: `*Friction Points:*\n${analysis.frictionPoints.length}`,
-                  },
-                  {
-                    type: 'mrkdwn',
-                    text: `*Priority:*\n${analysis.severity.hasHighPriority ? '🔴 High' : '🟡 Medium'}`,
-                  },
-                  {
-                    type: 'mrkdwn',
-                    text: `*Video:*\n${sessionData.metadata?.filename || 'Unknown'}`,
-                  },
-                ],
-              },
-            ],
-          };
-          
-          if (githubIssue) {
-            message.blocks.push({
-              type: 'section',
-              text: {
-                type: 'mrkdwn',
-                text: `📝 *GitHub Issue Created:* <${githubIssue.html_url}|#${githubIssue.number}>`,
-              },
-            });
-          }
-          
-          await composio.slack.sendMessage({
-            channel: process.env.SLACK_CHANNEL,
-            ...message,
-          });
-          
-          return { sent: true };
-        },
-      },
-      
-      {
-        name: 'storeInBasic',
-        description: 'Store session summary in Basic.tech personal data store',
-        execute: async ({ sessionData, analysis }) => {
-          const basic = mastra.getIntegration('basic');
-          
-          const summary = {
-            sessionId: sessionData.sessionId,
-            timestamp: new Date().toISOString(),
-            frictionCount: analysis.frictionPoints.length,
-            topFriction: analysis.frictionPoints.slice(0, 3).map(fp => ({
-              type: fp.type,
-              description: fp.description.substring(0, 100),
-            })),
-            severity: analysis.severity,
-            behaviorSummary: sessionData.behaviorSummary.substring(0, 500),
-          };
-          
-          await basic.store('session_summaries', sessionData.sessionId, summary);
-          
-          return { stored: true };
-        },
-      },
-      
-      {
-        name: 'compareWithHistory',
-        description: 'Compare with historical sessions',
-        execute: async ({ sessionData, analysis }) => {
-          const basic = mastra.getIntegration('basic');
-          
-          // Get recent session summaries
-          const recentSessions = await basic.query('session_summaries', {
-            limit: 10,
-            orderBy: 'timestamp',
-            order: 'desc',
-          });
-          
-          if (recentSessions.length > 0) {
-            const avgFriction = recentSessions.reduce((sum, s) => sum + s.frictionCount, 0) / recentSessions.length;
-            const trend = analysis.frictionPoints.length > avgFriction ? 'increasing' : 'decreasing';
-            
-            return {
-              historicalAverage: avgFriction.toFixed(1),
-              currentCount: analysis.frictionPoints.length,
-              trend,
-              comparison: `Current session has ${analysis.frictionPoints.length} friction points vs average of ${avgFriction.toFixed(1)}`,
-            };
-          }
-          
-          return {
-            historicalAverage: 0,
-            currentCount: analysis.frictionPoints.length,
-            trend: 'no_data',
-            comparison: 'No historical data available',
-          };
-        },
-      },
-    ],
-    
-    workflow: async ({ sessionId }) => {
-      console.log(`\n🤖 Agent processing session: ${sessionId}`);
-      
-      try {
-        // Step 1: Fetch session data
-        const sessionData = await agent.execute('fetchSessionData', { sessionId });
-        console.log(`✓ Fetched session data`);
-        
-        // Step 2: Analyze friction points
-        const analysis = await agent.execute('analyzeFriction', { sessionData });
-        console.log(`✓ Analyzed friction: ${analysis.frictionPoints.length} points found`);
-        
-        // Step 3: Store in Basic.tech
-        await agent.execute('storeInBasic', { sessionData, analysis });
-        console.log(`✓ Stored summary in Basic.tech`);
-        
-        // Step 4: Compare with history
-        const comparison = await agent.execute('compareWithHistory', { sessionData, analysis });
-        console.log(`✓ Historical comparison: ${comparison.comparison}`);
-        
-        // Step 5: Take action if needed
-        let githubIssue = null;
-        if (analysis.actionRequired) {
-          console.log(`⚠️  Action required - severity exceeds threshold or has high priority`);
-          
-          // Create GitHub issue
-          githubIssue = await agent.execute('createGitHubIssue', { sessionData, analysis });
-          console.log(`✓ Created GitHub issue #${githubIssue.number}`);
+    async processSession(sessionId) {
+        if (!this.initialized) {
+            await this.initialize();
         }
         
-        // Step 6: Always send Slack notification for completed analysis
-        await agent.execute('sendSlackNotification', { 
-          sessionData, 
-          analysis, 
-          githubIssue,
-          comparison 
-        });
-        console.log(`✓ Sent Slack notification`);
-        
+        try {
+            // Fetch session data from Firestore
+            const sessionData = await this.getSessionData(sessionId);
+            
+            if (!sessionData) {
+                throw new Error(`Session ${sessionId} not found`);
+            }
+            
+            // Analyze friction points
+            const analysis = await this.analyzeFrictionPoints(sessionData);
+            
+            // Create GitHub issues for high-priority friction points
+            if (analysis.highPriorityIssues && analysis.highPriorityIssues.length > 0) {
+                await this.createGitHubIssues(analysis.highPriorityIssues, sessionId);
+            }
+            
+            // Send Slack notifications
+            await this.sendSlackNotifications(analysis, sessionId);
+            
+            return {
+                sessionId,
+                analysis,
+                actionsCreated: true
+            };
+            
+        } catch (error) {
+            logger.error(`Error processing session ${sessionId}:`, error);
+            throw error;
+        }
+    }
+
+    async getSessionData(sessionId) {
+        try {
+            const doc = await firestore
+                .collection(process.env.FIRESTORE_COLLECTION_SESSIONS)
+                .doc(sessionId)
+                .get();
+            
+            if (!doc.exists) {
+                return null;
+            }
+            
+            return { id: doc.id, ...doc.data() };
+        } catch (error) {
+            logger.error(`Error fetching session ${sessionId}:`, error);
+            throw error;
+        }
+    }
+
+    async analyzeFrictionPoints(sessionData) {
+        try {
+            const { frictionPoints = [], stats = {} } = sessionData;
+            
+            // Categorize friction points by severity
+            const highPriorityIssues = frictionPoints.filter(point => 
+                point.priority === 'high' || point.type === 'rage_click'
+            );
+            
+            const mediumPriorityIssues = frictionPoints.filter(point => 
+                point.priority === 'medium'
+            );
+            
+            // Calculate metrics
+            const totalFrictionPoints = frictionPoints.length;
+            const rageClickCount = frictionPoints.filter(p => p.type === 'rage_click').length;
+            const averageTaskTime = stats.averageTaskTime || 0;
+            
+            // Generate insights
+            const insights = this.generateInsights(frictionPoints, stats);
+            
+            return {
+                totalFrictionPoints,
+                highPriorityIssues: highPriorityIssues.map(this.formatIssueForGitHub),
+                mediumPriorityIssues,
+                rageClickCount,
+                averageTaskTime,
+                insights,
+                topIssues: highPriorityIssues.slice(0, 3) // Top 3 for Slack
+            };
+        } catch (error) {
+            logger.error('Error analyzing friction points:', error);
+            throw error;
+        }
+    }
+
+    formatIssueForGitHub(issue) {
         return {
-          sessionId,
-          processed: true,
-          actionTaken: analysis.actionRequired,
-          githubIssue: githubIssue?.number,
-          comparison,
+            title: issue.description || `${issue.type} detected`,
+            description: issue.description || `Friction point of type ${issue.type} detected`,
+            severity: issue.priority || 'medium',
+            frequency: issue.frequency || 1,
+            recommendation: this.generateRecommendation(issue)
+        };
+    }
+
+    generateRecommendation(issue) {
+        const recommendations = {
+            rage_click: 'Consider improving button responsiveness or providing clearer visual feedback',
+            slow_loading: 'Optimize page load times and add loading indicators',
+            form_error: 'Improve form validation and error messaging',
+            navigation_confusion: 'Simplify navigation structure and add breadcrumbs'
         };
         
-      } catch (error) {
-        console.error(`❌ Error processing session ${sessionId}:`, error);
-        throw error;
-      }
-    },
-  });
-  
-  // Add processSession method
-  agent.processSession = async (sessionId) => {
-    return await agent.workflow({ sessionId });
-  };
-  
-  return agent;
+        return recommendations[issue.type] || 'Review user experience for this interaction';
+    }
+
+    generateInsights(frictionPoints, stats) {
+        const insights = [];
+        
+        if (frictionPoints.length > 5) {
+            insights.push('High number of friction points detected - consider UX review');
+        }
+        
+        if (stats.averageTaskTime > 120) {
+            insights.push('Users taking longer than expected to complete tasks');
+        }
+        
+        const rageClicks = frictionPoints.filter(p => p.type === 'rage_click').length;
+        if (rageClicks > 0) {
+            insights.push(`${rageClicks} rage click events detected - check UI responsiveness`);
+        }
+        
+        return insights;
+    }
+
+    async createGitHubIssues(issues, sessionId) {
+        for (const issue of issues) {
+            try {
+                const result = await this.composioService.createGitHubIssue({
+                    title: `[Friction Point] ${issue.title}`,
+                    body: `**Session ID:** ${sessionId}\n\n**Description:** ${issue.description}\n\n**Severity:** ${issue.severity}\n\n**Frequency:** ${issue.frequency}\n\n**Recommendation:** ${issue.recommendation}\n\n**Session Analysis:** View detailed session data at ${process.env.FRONTEND_URL}/session/${sessionId}`,
+                    labels: ['friction-point', `severity-${issue.severity.toLowerCase()}`, 'automated'],
+                    assignees: [process.env.GITHUB_REPO_OWNER]
+                });
+                
+                logger.info(`Created GitHub issue: ${result.url}`);
+            } catch (error) {
+                logger.error('Failed to create GitHub issue:', error);
+            }
+        }
+    }
+
+    async sendSlackNotifications(analysis, sessionId) {
+        try {
+            const message = this.formatSlackMessage(analysis, sessionId);
+            
+            const result = await this.composioService.sendSlackNotification({
+                channel: process.env.SLACK_CHANNEL,
+                message: message.text,
+                attachments: message.attachments
+            });
+            
+            logger.info('Sent Slack notification');
+        } catch (error) {
+            logger.error('Failed to send Slack notification:', error);
+        }
+    }
+
+    formatSlackMessage(analysis, sessionId) {
+        const highPriorityCount = analysis.highPriorityIssues?.length || 0;
+        const totalIssues = analysis.totalFrictionPoints || 0;
+        
+        let text = `🚨 *New Friction Analysis Report*\n`;
+        text += `📊 **Session ID:** ${sessionId}\n`;
+        text += `📈 **Total Issues:** ${totalIssues}\n`;
+        text += `⚠️ **High Priority:** ${highPriorityCount}\n`;
+        text += `🔗 **View Details:** ${process.env.FRONTEND_URL}/session/${sessionId}`;
+        
+        const attachments = [];
+        
+        if (analysis.topIssues && analysis.topIssues.length > 0) {
+            const fields = analysis.topIssues.map(issue => ({
+                title: issue.title,
+                value: `${issue.description} (${issue.severity})`,
+                short: false
+            }));
+            
+            attachments.push({
+                color: highPriorityCount > 0 ? 'danger' : 'warning',
+                title: 'Top Friction Points',
+                fields: fields.slice(0, 3), // Limit to top 3
+                footer: 'Function Insights',
+                ts: Math.floor(Date.now() / 1000)
+            });
+        }
+        
+        return { text, attachments };
+    }
+}
+
+// Export the agent creation function
+export async function createMastraAgent() {
+    const agent = new FrictionAnalysisAgent();
+    await agent.initialize();
+    return agent;
 }

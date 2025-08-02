@@ -3,7 +3,7 @@
 import os
 import uuid
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from functools import wraps
@@ -29,6 +29,8 @@ logger = logging.getLogger(__name__)
 # Initialize Google Cloud clients
 storage_client = storage.Client(project=Config.GOOGLE_CLOUD_PROJECT)
 publisher = pubsub_v1.PublisherClient()
+# Explicitly set the project for Pub/Sub operations
+os.environ['GOOGLE_CLOUD_PROJECT'] = Config.GOOGLE_CLOUD_PROJECT
 firestore_client = firestore.Client(project=Config.GOOGLE_CLOUD_PROJECT)
 anthropic_client = anthropic.Anthropic(api_key=Config.ANTHROPIC_API_KEY)
 
@@ -150,6 +152,55 @@ def upload_video():
     except Exception as e:
         logger.error(f"Error uploading video: {str(e)}")
         return jsonify({'error': 'Internal server error'}), 500
+
+
+@app.route('/api/session/<session_id>/video-url', methods=['GET'])
+@require_api_key
+def get_video_url(session_id):
+    """Get a signed URL for video playback."""
+    try:
+        # Get session from Firestore
+        doc_ref = firestore_client.collection('sessions').document(session_id)
+        doc = doc_ref.get()
+        
+        if not doc.exists:
+            return jsonify({'error': 'Session not found'}), 404
+        
+        session_data = doc.to_dict()
+        gcs_uri = session_data.get('gcsUri')
+        
+        if not gcs_uri:
+            return jsonify({'error': 'No video found for this session'}), 404
+        
+        # Parse GCS URI to get bucket and blob path
+        if gcs_uri.startswith('gs://'):
+            parts = gcs_uri[5:].split('/', 1)
+            if len(parts) != 2:
+                return jsonify({'error': 'Invalid GCS URI'}), 500
+            
+            bucket_name, blob_path = parts
+            
+            # Get the blob
+            bucket = storage_client.bucket(bucket_name)
+            blob = bucket.blob(blob_path)
+            
+            # Generate a signed URL valid for 1 hour
+            url = blob.generate_signed_url(
+                version="v4",
+                expiration=timedelta(hours=1),
+                method="GET"
+            )
+            
+            return jsonify({
+                'videoUrl': url,
+                'expiresIn': 3600  # 1 hour in seconds
+            }), 200
+        else:
+            return jsonify({'error': 'Invalid video URI format'}), 500
+            
+    except Exception as e:
+        logger.error(f"Error generating video URL: {str(e)}")
+        return jsonify({'error': 'Failed to generate video URL'}), 500
 
 
 @app.route('/api/session/<session_id>', methods=['GET'])

@@ -14,8 +14,12 @@ import ffmpeg
 import anthropic
 from PIL import Image
 import io
+import matplotlib
+matplotlib.use('Agg')  # Use non-interactive backend
+import matplotlib.pyplot as plt
 
 from config import Config
+from mouse_tracker import generate_heat_map
 
 # Initialize logging
 logging.basicConfig(level=logging.INFO)
@@ -24,6 +28,8 @@ logger = logging.getLogger(__name__)
 # Initialize Google Cloud clients
 storage_client = storage.Client(project=Config.GOOGLE_CLOUD_PROJECT)
 firestore_client = firestore.Client(project=Config.GOOGLE_CLOUD_PROJECT)
+# Explicitly set the project for Pub/Sub operations
+os.environ['GOOGLE_CLOUD_PROJECT'] = Config.GOOGLE_CLOUD_PROJECT
 subscriber = pubsub_v1.SubscriberClient()
 
 # Initialize Anthropic client
@@ -79,6 +85,9 @@ class VideoProcessor:
             
             # Analyze key frames with AI
             self._analyze_frames()
+            
+            # Analyze events and funnels
+            self._analyze_events()
             
             # Generate behavior summary
             self._generate_summary()
@@ -200,6 +209,130 @@ class VideoProcessor:
                 logger.warning(f"Error tracking mouse in frame {idx}: {str(e)}")
         
         logger.info(f"Tracked {len(self.results['mousePositions'])} mouse positions")
+        
+        # Calculate additional movement statistics
+        self._calculate_movement_stats()
+    
+    def _calculate_movement_stats(self):
+        """Calculate additional movement statistics."""
+        positions = self.results['mousePositions']
+        if len(positions) < 2:
+            return
+        
+        total_distance = 0
+        speeds = []
+        
+        for i in range(1, len(positions)):
+            prev_pos = positions[i-1]
+            curr_pos = positions[i]
+            
+            # Calculate distance
+            dx = curr_pos['x'] - prev_pos['x']
+            dy = curr_pos['y'] - prev_pos['y']
+            distance = np.sqrt(dx*dx + dy*dy)
+            total_distance += distance
+            
+            # Calculate speed (pixels per frame)
+            time_diff = curr_pos['timestamp'] - prev_pos['timestamp']
+            if time_diff > 0:
+                speed = distance / time_diff
+                speeds.append(speed)
+        
+        # Update stats
+        self.results['stats']['totalMovements'] = len(positions)
+        self.results['stats']['totalDistance'] = float(total_distance)
+        self.results['stats']['averageSpeed'] = float(np.mean(speeds)) if speeds else 0.0
+        self.results['stats']['maxSpeed'] = float(np.max(speeds)) if speeds else 0.0
+    
+    def _analyze_events(self):
+        """Analyze user events and funnel patterns from mouse movements."""
+        positions = self.results['mousePositions']
+        if len(positions) < 2:
+            return
+        
+        events = []
+        clicks = []
+        scrolls = []
+        
+        # Detect clicks (rapid movement followed by pause)
+        for i in range(1, len(positions) - 1):
+            prev_pos = positions[i-1]
+            curr_pos = positions[i]
+            next_pos = positions[i+1]
+            
+            # Calculate movement deltas
+            delta1 = np.sqrt((curr_pos['x'] - prev_pos['x'])**2 + (curr_pos['y'] - prev_pos['y'])**2)
+            delta2 = np.sqrt((next_pos['x'] - curr_pos['x'])**2 + (next_pos['y'] - curr_pos['y'])**2)
+            
+            # Detect click pattern: movement then stillness
+            if delta1 > 20 and delta2 < 5:
+                click_event = {
+                    'type': 'click',
+                    'frameIndex': curr_pos['frameIndex'],
+                    'timestamp': curr_pos['timestamp'],
+                    'x': curr_pos['x'],
+                    'y': curr_pos['y'],
+                    'intensity': float(delta1)
+                }
+                events.append(click_event)
+                clicks.append(click_event)
+        
+        # Detect scrolling (vertical movement patterns)
+        window_size = 5
+        for i in range(window_size, len(positions) - window_size):
+            y_positions = [positions[j]['y'] for j in range(i-window_size, i+window_size)]
+            y_trend = y_positions[-1] - y_positions[0]
+            
+            # Significant vertical movement indicates scrolling
+            if abs(y_trend) > 50:
+                scroll_event = {
+                    'type': 'scroll',
+                    'frameIndex': positions[i]['frameIndex'],
+                    'timestamp': positions[i]['timestamp'],
+                    'direction': 'down' if y_trend > 0 else 'up',
+                    'magnitude': abs(float(y_trend))
+                }
+                events.append(scroll_event)
+                scrolls.append(scroll_event)
+        
+        # Detect rage clicks (multiple rapid clicks in same area)
+        rage_clicks = []
+        for i, click in enumerate(clicks):
+            nearby_clicks = []
+            for j, other_click in enumerate(clicks):
+                if i != j and abs(other_click['timestamp'] - click['timestamp']) < 3:  # Within 3 seconds
+                    distance = np.sqrt((other_click['x'] - click['x'])**2 + (other_click['y'] - click['y'])**2)
+                    if distance < 100:  # Within 100 pixels
+                        nearby_clicks.append(other_click)
+            
+            if len(nearby_clicks) >= 2:  # 3+ clicks in same area
+                rage_click_event = {
+                    'type': 'rage_click',
+                    'frameIndex': click['frameIndex'],
+                    'timestamp': click['timestamp'],
+                    'x': click['x'],
+                    'y': click['y'],
+                    'clickCount': len(nearby_clicks) + 1
+                }
+                events.append(rage_click_event)
+                rage_clicks.append(rage_click_event)
+        
+        # Update results
+        self.results['events'] = events
+        self.results['stats']['totalClicks'] = len(clicks)
+        self.results['stats']['totalScrolls'] = len(scrolls)
+        self.results['stats']['rageClicks'] = len(rage_clicks)
+        
+        # Add rage clicks as friction points
+        for rage_click in rage_clicks:
+            self.results['frictionPoints'].append({
+                'type': 'rage_click',
+                'frameIndex': rage_click['frameIndex'],
+                'timestamp': rage_click['timestamp'],
+                'description': f"User performed {rage_click['clickCount']} rapid clicks in the same area, indicating potential frustration or unresponsive UI element"
+            })
+        
+        logger.info(f"Detected {len(events)} events: {len(clicks)} clicks, {len(scrolls)} scrolls, {len(rage_clicks)} rage clicks")
     
     def _analyze_frames(self):
         """Analyze key frames using Anthropic AI."""
@@ -334,30 +467,60 @@ Format your response as clear, actionable bullet points."""
                 content_type='application/json'
             )
             
-            # Generate and save heat map (placeholder for now)
-            # In production, create actual heat map visualization
+            # Generate and save heat map image
+            heatmap_url = None
+            if self.results['mousePositions']:
+                heatmap_path = os.path.join(self.temp_dir, 'heatmap.png')
+                
+                # Convert mouse positions to format expected by generate_heat_map
+                formatted_positions = []
+                for pos in self.results['mousePositions']:
+                    formatted_positions.append({
+                        'position': (pos['x'], pos['y']),
+                        'timestamp': pos['timestamp']
+                    })
+                
+                # Generate heat map
+                generate_heat_map(formatted_positions, heatmap_path)
+                
+                # Upload heat map to Cloud Storage
+                heatmap_blob = results_bucket.blob(f"{self.session_id}/heatmap.png")
+                with open(heatmap_path, 'rb') as f:
+                    heatmap_blob.upload_from_file(f, content_type='image/png')
+                
+                heatmap_url = f"gs://{Config.GCS_RESULTS_BUCKET}/{self.session_id}/heatmap.png"
+                logger.info(f"Heat map saved to {heatmap_url}")
+            
+            # Also save JSON metadata
             heatmap_data = {
                 'sessionId': self.session_id,
                 'mousePositions': self.results['mousePositions'],
-                'generated': datetime.utcnow().isoformat()
+                'generated': datetime.utcnow().isoformat(),
+                'heatmapUrl': heatmap_url
             }
             
-            heatmap_blob = results_bucket.blob(f"{self.session_id}/heatmap.json")
-            heatmap_blob.upload_from_string(
+            heatmap_json_blob = results_bucket.blob(f"{self.session_id}/heatmap.json")
+            heatmap_json_blob.upload_from_string(
                 json.dumps(heatmap_data, indent=2),
                 content_type='application/json'
             )
             
-            # Update Firestore
+            # Update Firestore with all analytics
             doc_ref = firestore_client.collection(Config.FIRESTORE_COLLECTION_SESSIONS).document(self.session_id)
-            doc_ref.update({
+            update_data = {
                 'stats': self.results['stats'],
                 'frictionPoints': self.results['frictionPoints'],
                 'behaviorSummary': self.results['behaviorSummary'],
                 'analysisCompleted': datetime.utcnow(),
                 'resultsUri': f"gs://{Config.GCS_RESULTS_BUCKET}/{self.session_id}/",
                 'agentProcessed': False  # Flag for agent processing
-            })
+            }
+            
+            # Add heatmap URL if generated
+            if heatmap_url:
+                update_data['heatmapUrl'] = heatmap_url
+            
+            doc_ref.update(update_data)
             
             logger.info(f"Saved results for session {self.session_id}")
             

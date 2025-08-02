@@ -27,8 +27,10 @@ function-hackathon/
 - 🤖 AI-powered friction point detection using Anthropic
 - 📊 Natural language queries across sessions
 - 🎫 Automated bug ticket creation via Composio
-- 🎙️ Voice interface via Vapi (optional)
+- 🎙️ Voice interface via Vapi for phone-based queries
 - 📈 Comprehensive dashboards and heat maps
+- 🔔 Real-time notifications via Slack
+- 💾 Session memory with Basic.tech integration
 
 ## Getting Started
 
