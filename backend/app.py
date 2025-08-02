@@ -4,6 +4,8 @@ Flask Web Application for Video Interaction Analysis
 """
 
 import os
+import firebase_admin
+from firebase_admin import credentials, firestore
 import sys
 import subprocess
 import tempfile
@@ -36,6 +38,13 @@ from interaction_analyzer import (
 )
 
 app = Flask(__name__)
+
+# Firestore initialization
+FIRESTORE_CRED_PATH = os.getenv('GOOGLE_APPLICATION_CREDENTIALS', 'serviceAccount.json')
+if not firebase_admin._apps:
+    cred = credentials.Certificate(FIRESTORE_CRED_PATH)
+    firebase_admin.initialize_app(cred)
+db = firestore.client()
 app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024  # 100MB max file size
 app.config['UPLOAD_FOLDER'] = 'uploads'
 app.config['RESULTS_FOLDER'] = 'results'
@@ -137,7 +146,34 @@ def run_interaction_analysis(video_path, analysis_id):
         
         # Create summary for web display
         summary = create_web_summary(movement_data, friction_points, interaction_analysis, behavior_analysis, frame_count)
-        
+
+        # --- Firestore Integration ---
+        session_doc = {
+            'session_id': analysis_id,
+            'timestamp': firestore.SERVER_TIMESTAMP,
+            'video_name': video_name,
+            'friction_points': friction_points,
+            'event_stream': movement_data.get('event_stream', []),
+            'interaction_analysis': interaction_analysis,
+            'behavior_analysis': behavior_analysis,
+            'summary': summary,
+            'mouse_positions_count': len(mouse_positions),
+            'frame_count': frame_count,
+        }
+        db.collection('sessions').document(analysis_id).set(session_doc)
+
+        # Universal context: Personal Data Store (user-specific summary)
+        # For demo, use API key as user id (replace with real user id in production)
+        user_id = api_key[-8:] if api_key else 'unknown_user'
+        user_summary_doc = {
+            'user_id': user_id,
+            'last_session_id': analysis_id,
+            'last_summary': summary,
+            'last_behavior_analysis': behavior_analysis,
+            'updated_at': firestore.SERVER_TIMESTAMP,
+        }
+        db.collection('user_summaries').document(user_id).set(user_summary_doc, merge=True)
+
         return {
             'success': True,
             'summary': summary,
